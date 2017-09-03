@@ -1,0 +1,9 @@
+[package]
+name = "myclir"
+version = "0.1.0"
+authors = ["root"]
+
+[dependencies]
+r2d2 = "0.7.0"
+r2d2_postgres = "0.13.0"
+postgres = "0.15"
