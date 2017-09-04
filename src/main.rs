@@ -2,12 +2,17 @@ extern crate r2d2;
 extern crate r2d2_postgres;
 extern crate postgres;
 
+#[macro_use] extern crate prettytable;
+
 use std::io;
 use std::io::Write;
 use std::thread;
 use r2d2::{Pool, PooledConnection};
 use r2d2_postgres::{TlsMode, PostgresConnectionManager};
-//use postgres::{Connection, TlsMode};
+
+use prettytable::Table;
+use prettytable::row::Row;
+use prettytable::cell::Cell;
 
 pub type PostgresPool = Pool<PostgresConnectionManager>;
 pub type PostgresPooledConnection = PooledConnection<PostgresConnectionManager>;
@@ -35,12 +40,22 @@ fn welcome_menu() {
 }
 
 fn list_databases(conn :&PostgresPooledConnection) {
-  //let stmt = conn.prepare("SELECT datname FROM pg_database WHERE datistemplate = false;").unwrap();
-  //for row in stmt.query(&[]).unwrap() {
-  for row in &conn.query("SELECT datname FROM pg_database WHERE datistemplate = false;", &[]).unwrap() {
-    let datname: String = row.get(0);
-    println!("DB name: {}", datname);
+  let mut table = Table::new();
+  table.add_row(row!["DB Name", "Connection Limit", "Tablespace", "Owner"]);
+  
+  for dbrow in &conn.query("SELECT datname, datconnlimit, spcname, rolname FROM pg_database d, pg_tablespace t, pg_roles r WHERE datistemplate = false AND d.dattablespace=t.oid AND d.datdba=r.oid;", &[]).unwrap() {
+    let datname: String = dbrow.get(0);
+    let connlimit: i32 = dbrow.get(1);
+    let connlimit_str: String = connlimit.to_string();
+    let spcname: String = dbrow.get(2);
+    let owner: String = dbrow.get(3);
+    table.add_row(Row::new(vec![
+      Cell::new(&datname),
+      Cell::new(&connlimit_str),
+      Cell::new(&spcname),
+      Cell::new(&owner)]));
   }
+  table.printstd();
 }
 
 fn db_menu(conn :&PostgresPooledConnection) {
@@ -56,7 +71,19 @@ fn db_menu(conn :&PostgresPooledConnection) {
     io::stdin().read_line(&mut operation)
       .expect("dsds");
 
-    let operation: u32 = match operation.trim().parse() {
+    match &*(operation).trim() {
+      "q" => {
+        println!("\nThank you for using pgclir!");
+        break;
+      },
+      "Q" => {
+        println!("\nThank you for using pgclir!");
+        break;
+      },
+      _ => (),
+    }
+
+    let operation: i32 = match operation.trim().parse() {
       Ok(num) if num > 0 && num < 6 => num,
       Ok(_) => continue,
       Err(_) => continue,
@@ -93,9 +120,9 @@ fn main() {
   let pool = setup_connection_pool(&conn_string, 1);
   let conn = pool.get().unwrap();
 
-  loop {
+//  loop {
     db_menu(&conn);
   //println!("inserting dummy data.");
   //insert_dummy_data(&conn);
-  }
+//  }
 }
