@@ -7,6 +7,7 @@ extern crate postgres;
 use std::io;
 use std::io::Write;
 use std::thread;
+use std::process::Command;
 use r2d2::{Pool, PooledConnection};
 use r2d2_postgres::{TlsMode, PostgresConnectionManager};
 
@@ -16,6 +17,11 @@ use prettytable::cell::Cell;
 
 pub type PostgresPool = Pool<PostgresConnectionManager>;
 pub type PostgresPooledConnection = PooledConnection<PostgresConnectionManager>;
+
+struct Database {
+  name: String,
+  owner: String,
+}
 
 fn welcome_menu() {
   println!("Welcome, please start with connecting to the MariaDB server");
@@ -39,7 +45,8 @@ fn welcome_menu() {
     .expect("Error reading password");
 }
 
-fn list_databases(conn :&PostgresPooledConnection) {
+fn list_databases(conn :&PostgresPooledConnection, operation: &i32) {
+  println!("\nList of databases");
   let mut table = Table::new();
   table.add_row(row!["DB Name", "Connection Limit", "Tablespace", "Owner"]);
   
@@ -58,10 +65,106 @@ fn list_databases(conn :&PostgresPooledConnection) {
   table.printstd();
 }
 
+fn list_users(conn :&PostgresPooledConnection, operation: &i32) {
+  println!("\n{}. List db users", operation);
+  let mut table = Table::new();
+  table.add_row(row!["Username", "CreateDB", "SuperUser", "Replication", "Bypass Rowlevel Sec"]);
+
+  for dbrow in &conn.query("select usename, usecreatedb, usesuper, userepl, usebypassrls, valuntil from pg_user;", &[]).unwrap() {
+    let username: String = dbrow.get(0);
+    let createdb: bool = dbrow.get(1);
+    let createdb_str = createdb.to_string();
+    let superuser: bool = dbrow.get(2);
+    let superuser_str = superuser.to_string();
+    let repl: bool = dbrow.get(3);
+    let repl_str = repl.to_string();
+    let bypass: bool = dbrow.get(4);
+    let bypass_str = bypass.to_string();
+    table.add_row(Row::new(vec![
+      Cell::new(&username),
+      Cell::new(&createdb_str),
+      Cell::new(&superuser_str),
+      Cell::new(&repl_str),
+      Cell::new(&bypass_str)]));
+  }
+  table.printstd();
+  
+}
+
+fn list_activities(conn :&PostgresPooledConnection, operation: &i32) {
+  println!("\n{}. List db activities", operation);
+  let mut table = Table::new();
+  table.add_row(row!["DB Name", "Pid", "Username", "Application Name"]);
+
+  for dbrow in &conn.query("select datname, pid, usename, application_name, client_addr from pg_stat_activity;", &[]).unwrap() {
+    let dbname: String = dbrow.get(0);
+    let pid: i32 = dbrow.get(1);
+    let pid_str = pid.to_string();
+    let username: String = dbrow.get(2);
+    let appname: String = dbrow.get(3);
+    //let client: String = dbrow.get(4);
+    table.add_row(Row::new(vec![
+      Cell::new(&dbname),
+      Cell::new(&pid_str),
+      Cell::new(&username),
+      Cell::new(&appname)]));
+      //Cell::new(&client)]));
+  }
+  table.printstd();
+}
+
+fn create_database(conn :&PostgresPooledConnection, operation: &i32) {
+  println!("\n{}. Create database", operation);
+  print!("DB name: "); 
+  io::stdout().flush().unwrap();
+  let mut dbname = String::new();
+  io::stdin().read_line(&mut dbname)
+    .expect("Error reading password");
+
+  print!("DB owner: "); 
+  io::stdout().flush().unwrap();
+  let mut owner = String::new();
+  io::stdin().read_line(&mut owner)
+    .expect("Error reading password");
+
+  /*
+  let db = Database {
+    name: "dsds".to_string(),
+    owner: "dsdsff".to_string(),
+  };
+*/
+  //let sql = format!("create database {} owner ddd", &owner);
+  //let updates = &conn.execute("{}", &[&sql]);
+  //let stmt = &conn.prepare("create database $1 owner postgres");
+  //let updates = &conn.execute("create database www owner postgres", &[]);
+  //stmt.query(&[&dbname]);
+  //println!("{} rows updated.", updates);
+}
+
+fn create_user(conn :&PostgresPooledConnection, operation: &i32) {
+  println!("\n{}. Create db user", operation);
+  print!("Username: ");
+  io::stdout().flush().unwrap();
+  let mut username = String::new();
+  io::stdin().read_line(&mut username)
+    .expect("Error reading password");
+
+  print!("Password: ");
+  io::stdout().flush().unwrap();
+  let mut passwd = String::new();
+  io::stdin().read_line(&mut passwd)
+    .expect("Error reading password");
+
+  &conn.execute("CREATE ROLE $1 PASSWORD 'dsd'", &[&username]);
+}
+
 fn db_menu(conn :&PostgresPooledConnection) {
   println!("Select the operation you want to perform");
-  println!("1. List databases");
-  println!("2. List users");
+  println!("1. Create database");
+  println!("2. Create user");
+  println!("3. List databases");
+  println!("4. List users");
+  println!("5. List activities");
 
   loop {
     print!("Operation (eg: 1):");
@@ -90,10 +193,11 @@ fn db_menu(conn :&PostgresPooledConnection) {
     };
 
     match operation {
-      1 => list_databases(&conn),
-      2 => println!("2"),
-      3 => println!("3"),
-      4 => println!("4"),
+      1 => create_database(&conn, &operation),
+      2 => create_user(&conn, &operation),
+      3 => list_databases(&conn, &operation),
+      4 => list_users(&conn, &operation),
+      5 => list_activities(&conn, &operation),
       _ => println!("dsds"),
     }
   }
@@ -103,14 +207,6 @@ fn setup_connection_pool(cn_str: &str, pool_size: u32) -> PostgresPool {
     let manager = ::r2d2_postgres::PostgresConnectionManager::new(cn_str, TlsMode::None).unwrap();
     let config = ::r2d2::Config::builder().pool_size(pool_size).build();
     ::r2d2::Pool::new(config, manager).unwrap()
-}
-
-fn insert_dummy_data(conn :&PostgresPooledConnection) {
-    conn.execute("DROP TABLE IF EXISTS messages;", &[]).unwrap();    
-    conn.execute("CREATE TABLE IF NOT EXISTS messages (id INT PRIMARY KEY);", &[]).unwrap();
-    conn.execute("INSERT INTO messages VALUES (1);", &[]).unwrap();
-    conn.execute("INSERT INTO messages VALUES (2);", &[]).unwrap();
-    conn.execute("INSERT INTO messages VALUES (3);", &[]).unwrap();    
 }
 
 fn main() {
