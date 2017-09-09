@@ -1,13 +1,12 @@
 extern crate r2d2;
 extern crate r2d2_postgres;
 extern crate postgres;
+extern crate rpassword;
 
 #[macro_use] extern crate prettytable;
 
 use std::io;
 use std::io::Write;
-use std::thread;
-use std::process::Command;
 use r2d2::{Pool, PooledConnection};
 use r2d2_postgres::{TlsMode, PostgresConnectionManager};
 
@@ -18,35 +17,50 @@ use prettytable::cell::Cell;
 pub type PostgresPool = Pool<PostgresConnectionManager>;
 pub type PostgresPooledConnection = PooledConnection<PostgresConnectionManager>;
 
-struct Database {
-  name: String,
-  owner: String,
-}
-
-fn welcome_menu() {
+fn welcome_menu() -> Vec<String> {
   println!("Welcome, please start with connecting to the MariaDB server");
   print!("Host:");
-  io::stdout().flush().unwrap();
+  io::stdout().flush();
 
+  // Prompt for connection parameters and read user input
   let mut host = String::new();
-  io::stdin().read_line(&mut host)
-    .expect("Error reading host");
+  io::stdin().read_line(&mut host);
+  host.pop();
+
+  print!("Database:");
+  io::stdout().flush();
+  let mut database = String::new();
+  io::stdin().read_line(&mut database);
+  database.pop();
+
+  print!("Port:");
+  io::stdout().flush();
+  let mut port = String::new();
+  io::stdin().read_line(&mut port);
+  port.pop();
 
   print!("Username:");
-  io::stdout().flush().unwrap();
+  io::stdout().flush();
   let mut username = String::new();
-  io::stdin().read_line(&mut username)
-    .expect("Error reading username");
+  io::stdin().read_line(&mut username);
+  username.pop();
 
-  print!("Password:");
-  io::stdout().flush().unwrap();
+  // Mask password
   let mut passwd = String::new();
-  io::stdin().read_line(&mut passwd)
-    .expect("Error reading password");
+  passwd = rpassword::prompt_password_stdout("Password: ").unwrap();
+
+  // Return conn info as a vector
+  let mut db_params: Vec<String> = Vec::new();
+  db_params.push(host);
+  db_params.push(database);
+  db_params.push(port);
+  db_params.push(username);
+  db_params.push(passwd);
+  db_params
 }
 
 fn list_databases(conn :&PostgresPooledConnection, operation: &i32) {
-  println!("\nList of databases");
+  println!("\n{}. List of databases", operation);
   let mut table = Table::new();
   table.add_row(row!["DB Name", "Connection Limit", "Tablespace", "Owner"]);
   
@@ -127,18 +141,9 @@ fn create_database(conn :&PostgresPooledConnection, operation: &i32) {
   io::stdin().read_line(&mut owner)
     .expect("Error reading password");
 
-  /*
-  let db = Database {
-    name: "dsds".to_string(),
-    owner: "dsdsff".to_string(),
-  };
-*/
-  //let sql = format!("create database {} owner ddd", &owner);
-  //let updates = &conn.execute("{}", &[&sql]);
-  //let stmt = &conn.prepare("create database $1 owner postgres");
-  //let updates = &conn.execute("create database www owner postgres", &[]);
-  //stmt.query(&[&dbname]);
-  //println!("{} rows updated.", updates);
+  // Not working as rust-postgres driver does not support parameters for 'create database'
+  // statements
+  let sql = &conn.execute("create database $1 owner $2", &[&dbname,&owner]);
 }
 
 fn create_user(conn :&PostgresPooledConnection, operation: &i32) {
@@ -155,9 +160,12 @@ fn create_user(conn :&PostgresPooledConnection, operation: &i32) {
   io::stdin().read_line(&mut passwd)
     .expect("Error reading password");
 
-  &conn.execute("CREATE ROLE $1 PASSWORD 'dsd'", &[&username]);
+  // Not working as rust-postgres driver does not support parameters for 'create role'
+  // statements
+  &conn.execute("CREATE ROLE $1 PASSWORD $2", &[&username,&passwd]);
 }
 
+// Main menu of the application
 fn db_menu(conn :&PostgresPooledConnection) {
   println!("Select the operation you want to perform");
   println!("1. Create database");
@@ -166,6 +174,7 @@ fn db_menu(conn :&PostgresPooledConnection) {
   println!("4. List users");
   println!("5. List activities");
 
+  // Keep looping to keep the menu on
   loop {
     print!("Operation (eg: 1):");
     io::stdout().flush().unwrap();
@@ -174,6 +183,7 @@ fn db_menu(conn :&PostgresPooledConnection) {
     io::stdin().read_line(&mut operation)
       .expect("dsds");
 
+    // Exit immediately if user decides to quit
     match &*(operation).trim() {
       "q" => {
         println!("\nThank you for using pgclir!");
@@ -192,6 +202,7 @@ fn db_menu(conn :&PostgresPooledConnection) {
       Err(_) => continue,
     };
 
+    // Redirect to the correct function according to user preference
     match operation {
       1 => create_database(&conn, &operation),
       2 => create_user(&conn, &operation),
@@ -203,6 +214,7 @@ fn db_menu(conn :&PostgresPooledConnection) {
   }
 }
 
+// Seting up the db connection pool
 fn setup_connection_pool(cn_str: &str, pool_size: u32) -> PostgresPool {
     let manager = ::r2d2_postgres::PostgresConnectionManager::new(cn_str, TlsMode::None).unwrap();
     let config = ::r2d2::Config::builder().pool_size(pool_size).build();
@@ -210,15 +222,19 @@ fn setup_connection_pool(cn_str: &str, pool_size: u32) -> PostgresPool {
 }
 
 fn main() {
-  welcome_menu();
-  let conn_string = String::from("postgres://postgres:Admin123.!@rust-postgres.cnkyd5c6frx2.us-east-2.rds.amazonaws.com:5432/pub");
+  let mut params: Vec<String> = Vec::new();
 
+  // Welcome message and prompt for connection info
+  params = welcome_menu();
+
+  // Construction of DB connection string
+  let conn_string = format!("postgres://{}:{}@{}:{}/{}", &params[3], &params[4], &params[0], &params[2], &params[1]);
+
+  // DB connection pooling
   let pool = setup_connection_pool(&conn_string, 1);
   let conn = pool.get().unwrap();
 
-//  loop {
-    db_menu(&conn);
-  //println!("inserting dummy data.");
-  //insert_dummy_data(&conn);
-//  }
+  // Display DB operations menu
+  println!("\nYou are now connected to: {}\n", &params[0]);
+  db_menu(&conn);
 }
